@@ -19,7 +19,7 @@ np.random.seed(42)
 tf.random.set_seed(42)
 
 # --- 1. CONFIG & STYLING ---
-st.set_page_config(page_title="Market Pulse AI", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Flash Scanner Pro", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>

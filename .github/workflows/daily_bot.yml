@@ -1,0 +1,22 @@
+name: Daily Market AI
+on:
+  schedule:
+    # Runs at 9:00 AM UTC every day
+    - cron: '0 9 * * *'
+  workflow_dispatch: # Allows you to click a button to run it manually
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      - name: Install Libraries
+        run: pip install yfinance pandas_ta google-generativeai
+      - name: Run AI
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python main.py

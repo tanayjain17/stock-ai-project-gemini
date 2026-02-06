@@ -1,0 +1,10 @@
+streamlit
+yfinance
+numpy
+pandas
+tensorflow-cpu
+scikit-learn
+joblib
+plotly
+textblob
+feedparser

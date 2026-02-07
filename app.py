@@ -184,7 +184,7 @@ if view != "🏠 Market Dashboard":
     chart_range = st.sidebar.selectbox("Chart History", ["1 Day", "5 Days", "1 Month", "6 Months", "YTD", "1 Year", "5 Years", "Max"])
     
     # 2. AI MODEL HORIZON (Restored)
-    ai_horizon = st.sidebar.radio("AI Prediction Horizon", ["Short Term (Intraday)", "Long Term (Daily)"])
+    ai_horizon = st.sidebar.radio("AI Prediction Horizon", ["Short Term (Intraday)", "Long Term (Delivery)"])
 
 
 # --- 5. VISUALIZATION FRAGMENTS ---

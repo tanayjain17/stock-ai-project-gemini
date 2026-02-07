@@ -13,13 +13,14 @@ from datetime import datetime, time as dt_time
 import time
 import tensorflow as tf
 import pytz 
+import random # NEW: For Cache Busting
 
 # --- 0. SEED SETTING ---
 np.random.seed(42)
 tf.random.set_seed(42)
 
 # --- 1. CONFIG & STYLING ---
-st.set_page_config(page_title="Flash Scanner Pro", layout="wide", page_icon="⚡")
+st.set_page_config(page_title="Market Pulse AI", layout="wide", page_icon="⚡")
 
 st.markdown("""
 <style>
@@ -72,6 +73,14 @@ st.markdown("""
         transition: transform 0.2s;
     }
     .news-card:hover { transform: translateX(5px); background-color: #1a1f2b; }
+    
+    .news-meta {
+        font-size: 11px;
+        color: #888;
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 5px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -132,28 +141,48 @@ def get_live_data(symbol):
 
 def get_news(query):
     try:
-        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=en-IN&gl=IN&ceid=IN:en"
+        # NEW: Add random parameter to force cache clearing
+        cache_buster = random.randint(1, 10000)
+        url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=en-IN&gl=IN&ceid=IN:en&cb={cache_buster}"
+        
         feed = feedparser.parse(url)
         items = []
         for e in feed.entries[:8]:
             blob = TextBlob(e.title)
             sent = "🟢 Bullish" if blob.sentiment.polarity > 0.05 else "🔴 Bearish" if blob.sentiment.polarity < -0.05 else "⚪ Neutral"
-            ts = time.mktime(e.published_parsed) if 'published_parsed' in e else 0
-            items.append({'title': e.title, 'link': e.link, 'source': e.get('source', {}).get('title', 'News'), 'date': e.get('published','')[:16], 'ts': ts, 'sent': sent})
+            
+            # STRICT DATE PARSING
+            try:
+                # published_parsed gives a time struct, we convert to seconds for sorting
+                ts = time.mktime(e.published_parsed)
+                # Clean display date (e.g., "Fri, 07 Feb 2026 10:30 GMT")
+                date_display = e.published[:16] 
+            except:
+                ts = 0
+                date_display = "Recent"
+
+            items.append({
+                'title': e.title, 
+                'link': e.link, 
+                'source': e.get('source', {}).get('title', 'News'), 
+                'date': date_display, 
+                'ts': ts, 
+                'sent': sent
+            })
+        
+        # STRICT SORT: Highest timestamp (newest) first
         return sorted(items, key=lambda x: x['ts'], reverse=True)
     except: return []
 
 def add_indicators(df):
     df['SMA_50'] = df['Close'].rolling(50).mean()
     df['EMA_20'] = df['Close'].ewm(span=20).mean()
-    # ATR for Stop Loss Calculation
     high_low = df['High'] - df['Low']
     high_close = np.abs(df['High'] - df['Close'].shift())
     low_close = np.abs(df['Low'] - df['Close'].shift())
     ranges = pd.concat([high_low, high_close, low_close], axis=1)
     true_range = np.max(ranges, axis=1)
     df['ATR'] = true_range.rolling(14).mean()
-    
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
@@ -186,8 +215,6 @@ def train_ai(df):
     dummy = np.zeros((1, 4))
     dummy[0, 0] = pred_scaled[0, 0]
     pred_price = scaler.inverse_transform(dummy)[0, 0]
-    
-    # Calculate Volatility for SL/Targets
     last_atr = df['ATR'].iloc[-1]
     return pred_price, last_atr
 
@@ -203,11 +230,8 @@ is_bse = False
 if view == "📈 Stock Analyzer":
     t_name = st.sidebar.selectbox("Nifty 100 List", list(NIFTY_100_TICKERS.keys()))
     selected_ticker = NIFTY_100_TICKERS[t_name]
-    
-    # Global BSE Switch
     is_bse = st.sidebar.checkbox("Switch to BSE?", value=False)
     if is_bse: selected_ticker = selected_ticker.replace(".NS", ".BO")
-    
     st.sidebar.markdown("---")
     custom = st.sidebar.text_input("Or Search Stock (e.g. ZOMATO)")
     if custom: selected_ticker = f"{custom.upper()}.BO" if is_bse else f"{custom.upper()}.NS"
@@ -215,12 +239,9 @@ if view == "📈 Stock Analyzer":
 elif view == "🏦 ETFs & Mutual Funds":
     t_name = st.sidebar.selectbox("Popular ETFs", list(ETFS_MFS.keys()))
     selected_ticker = ETFS_MFS[t_name]
-    
-    # NEW: ETF Search + BSE
     st.sidebar.markdown("---")
     is_bse = st.sidebar.checkbox("Switch to BSE?", value=False, key="etf_bse")
     if is_bse: selected_ticker = selected_ticker.replace(".NS", ".BO")
-    
     custom_etf = st.sidebar.text_input("Or Search ETF (e.g. MAFANG)")
     if custom_etf: selected_ticker = f"{custom_etf.upper()}.BO" if is_bse else f"{custom_etf.upper()}.NS"
 
@@ -270,6 +291,32 @@ def render_stable_chart(ticker):
             st.plotly_chart(fig, use_container_width=True)
     except: st.error("Chart currently unavailable.")
 
+# NEW: Independent News Refresh Cycle (15 Minutes = 900 Seconds)
+@st.fragment(run_every=900)
+def render_news_feed(query_ticker):
+    clean_ticker = query_ticker.replace(".NS","").replace(".BO","")
+    st.subheader("📰 Latest News (Auto-Updates)")
+    
+    with st.spinner("Checking for new headlines..."):
+        news_items = get_news(clean_ticker)
+        
+    if news_items:
+        for n in news_items[:6]: # Show top 6
+            st.markdown(f"""
+            <div class="news-card">
+                <div class="news-meta">
+                    <span>🏛️ {n['source']}</span>
+                    <span>🕒 {n['date']}</span>
+                </div>
+                <a href="{n['link']}" target="_blank" style="color:#e0e0e0; text-decoration:none; font-weight:600; font-size:15px; display:block; margin-bottom:8px;">
+                    {n['title']}
+                </a>
+                <div style="font-size:12px; font-weight:bold;">{n['sent']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.info("No recent news found (Checking again in 15m...)")
+
 # --- 6. PAGE ROUTING ---
 
 if view == "🏠 Market Dashboard":
@@ -293,10 +340,9 @@ if view == "🏠 Market Dashboard":
                 """, unsafe_allow_html=True)
     render_dashboard()
     st.markdown("---")
-    st.subheader("📰 Top Market Headlines")
-    news = get_news("Indian Stock Market")
-    for n in news:
-        st.markdown(f'<div class="news-card"><div style="font-size:11px; color:#aaa;">{n["source"]} • {n["date"]}</div><a href="{n["link"]}" target="_blank" style="color:white; font-weight:bold; text-decoration:none;">{n["title"]}</a><div style="margin-top:5px; font-size:12px;">{n["sent"]}</div></div>', unsafe_allow_html=True)
+    
+    # News Fragment for Dashboard
+    render_news_feed("Indian Stock Market")
 
 else:
     st.title(f"📊 Analysis: {selected_ticker}")
@@ -327,7 +373,6 @@ else:
                             st.success(f"AI Target: **{curr_sym}{target:.2f}**")
                             st.markdown(f"Signal: **:{col}[{sig}]** (Potential: {diff:+.2f})")
                             
-                            # HIDDEN PRO PLAN
                             with st.expander("🔐 Unlock Pro Trading Plan (Buy/Sell/SL)"):
                                 sl = curr - (1.5 * atr) if diff > 0 else curr + (1.5 * atr)
                                 t1 = curr + (1 * atr) if diff > 0 else curr - (1 * atr)
@@ -347,10 +392,5 @@ else:
                 except Exception as e: st.error(f"Error: {e}")
 
     with c_news:
-        st.subheader("📰 Relevant News")
-        clean_ticker = selected_ticker.replace(".NS","").replace(".BO","")
-        news_items = get_news(clean_ticker)
-        if news_items:
-            for n in news_items[:5]:
-                st.markdown(f'<div style="margin-bottom:10px; border-bottom:1px solid #333; padding-bottom:5px;"><a href="{n["link"]}" style="color:#ddd; text-decoration:none; font-size:14px;">{n["title"]}</a><div style="font-size:10px; color:#666;">{n["date"]} • {n["sent"]}</div></div>', unsafe_allow_html=True)
-        else: st.info("No news found.")
+        # News Fragment for Specific Ticker
+        render_news_feed(selected_ticker)

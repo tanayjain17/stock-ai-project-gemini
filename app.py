@@ -13,7 +13,7 @@ from datetime import datetime, time as dt_time
 import time
 import tensorflow as tf
 import pytz 
-import random # NEW: For Cache Busting
+import random 
 
 # --- 0. SEED SETTING ---
 np.random.seed(42)
@@ -141,7 +141,6 @@ def get_live_data(symbol):
 
 def get_news(query):
     try:
-        # NEW: Add random parameter to force cache clearing
         cache_buster = random.randint(1, 10000)
         url = f"https://news.google.com/rss/search?q={urllib.parse.quote(query)}&hl=en-IN&gl=IN&ceid=IN:en&cb={cache_buster}"
         
@@ -150,12 +149,8 @@ def get_news(query):
         for e in feed.entries[:8]:
             blob = TextBlob(e.title)
             sent = "🟢 Bullish" if blob.sentiment.polarity > 0.05 else "🔴 Bearish" if blob.sentiment.polarity < -0.05 else "⚪ Neutral"
-            
-            # STRICT DATE PARSING
             try:
-                # published_parsed gives a time struct, we convert to seconds for sorting
                 ts = time.mktime(e.published_parsed)
-                # Clean display date (e.g., "Fri, 07 Feb 2026 10:30 GMT")
                 date_display = e.published[:16] 
             except:
                 ts = 0
@@ -169,8 +164,6 @@ def get_news(query):
                 'ts': ts, 
                 'sent': sent
             })
-        
-        # STRICT SORT: Highest timestamp (newest) first
         return sorted(items, key=lambda x: x['ts'], reverse=True)
     except: return []
 
@@ -249,6 +242,13 @@ elif view == "🛢️ Global Commodities":
     t_name = st.sidebar.selectbox("Global Assets", list(COMMODITIES_GLOBAL.keys()))
     selected_ticker = COMMODITIES_GLOBAL[t_name]
 
+# RESTORED: TIME RANGE SELECTOR (For all Analysis Views)
+time_range = "1 Day" # Default
+if view != "🏠 Market Dashboard":
+    st.sidebar.markdown("---")
+    st.sidebar.caption("Chart Settings")
+    time_range = st.sidebar.selectbox("Time Range", ["1 Day", "5 Days", "1 Month", "6 Months", "YTD", "1 Year", "5 Years", "Max"], index=0)
+
 # --- 5. SPLIT-SCREEN REFRESH ENGINE ---
 
 @st.fragment(run_every=2)
@@ -277,21 +277,49 @@ def render_fast_price_header(ticker):
     """, unsafe_allow_html=True)
 
 @st.fragment(run_every=60)
-def render_stable_chart(ticker):
-    is_open, _ = is_market_open(ticker)
+def render_stable_chart(ticker, range_choice):
+    # MAP TIME RANGES TO YFINANCE PARAMS
+    range_map = {
+        "1 Day": {"p": "1d", "i": "1m"},
+        "5 Days": {"p": "5d", "i": "15m"},
+        "1 Month": {"p": "1mo", "i": "1h"},
+        "6 Months": {"p": "6mo", "i": "1d"},
+        "YTD": {"p": "ytd", "i": "1d"},
+        "1 Year": {"p": "1y", "i": "1d"},
+        "5 Years": {"p": "5y", "i": "1wk"},
+        "Max": {"p": "max", "i": "1wk"}
+    }
+    
+    params = range_map[range_choice]
+    
     try:
-        df = yf.download(ticker, period="1d", interval="1m", progress=False)
+        df = yf.download(ticker, period=params["p"], interval=params["i"], progress=False)
         if isinstance(df.columns, pd.MultiIndex): df.columns = df.columns.droplevel(1)
+        
         if not df.empty:
             df = add_indicators(df)
             fig = go.Figure()
             fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
-            fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='#2979ff', width=2), name="EMA 20"))
-            fig.update_layout(height=450, margin=dict(t=30,b=0,l=0,r=0), template="plotly_dark", xaxis_rangeslider_visible=False, paper_bgcolor="#1e2330", plot_bgcolor="#1e2330", title=dict(text=f"1-Minute Chart ({ticker})", font=dict(color="#aaa", size=12)))
+            
+            # Only show EMA if we have enough data points to make it look smooth
+            if len(df) > 20:
+                fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='#2979ff', width=2), name="EMA 20"))
+            
+            fig.update_layout(
+                height=450, 
+                margin=dict(t=30,b=0,l=0,r=0), 
+                template="plotly_dark", 
+                xaxis_rangeslider_visible=False, 
+                paper_bgcolor="#1e2330", 
+                plot_bgcolor="#1e2330", 
+                title=dict(text=f"{range_choice} Chart ({ticker})", font=dict(color="#aaa", size=12))
+            )
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No chart data available for this range.")
     except: st.error("Chart currently unavailable.")
 
-# NEW: Independent News Refresh Cycle (15 Minutes = 900 Seconds)
+# INDEPENDENT NEWS REFRESH (15 Minutes)
 @st.fragment(run_every=900)
 def render_news_feed(query_ticker):
     clean_ticker = query_ticker.replace(".NS","").replace(".BO","")
@@ -301,7 +329,7 @@ def render_news_feed(query_ticker):
         news_items = get_news(clean_ticker)
         
     if news_items:
-        for n in news_items[:6]: # Show top 6
+        for n in news_items[:6]: 
             st.markdown(f"""
             <div class="news-card">
                 <div class="news-meta">
@@ -339,15 +367,16 @@ if view == "🏠 Market Dashboard":
                 </div>
                 """, unsafe_allow_html=True)
     render_dashboard()
-    st.markdown("---")
     
-    # News Fragment for Dashboard
+    st.markdown("---")
     render_news_feed("Indian Stock Market")
 
 else:
     st.title(f"📊 Analysis: {selected_ticker}")
     render_fast_price_header(selected_ticker)
-    render_stable_chart(selected_ticker)
+    
+    # PASS THE TIME RANGE TO THE CHART FRAGMENT
+    render_stable_chart(selected_ticker, time_range)
     
     st.markdown("---")
     c_ai, c_news = st.columns([1, 1])
@@ -392,5 +421,4 @@ else:
                 except Exception as e: st.error(f"Error: {e}")
 
     with c_news:
-        # News Fragment for Specific Ticker
         render_news_feed(selected_ticker)

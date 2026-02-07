@@ -132,7 +132,7 @@ def train_ai(df):
         Dense(1)
     ])
     model.compile(optimizer='adam', loss='mse')
-    model.fit(X, y, batch_size=16, epochs=5, verbose=0) # Epochs=5 for better accuracy
+    model.fit(X, y, batch_size=16, epochs=5, verbose=0) 
     last_60 = scaled[-60:].reshape(1, 60, 4)
     pred_scaled = model.predict(last_60)
     dummy = np.zeros((1, 4))
@@ -172,19 +172,15 @@ elif view == "🛢️ Global Commodities":
     t_name = st.sidebar.selectbox("Global Assets", list(COMMODITIES_GLOBAL.keys()))
     selected_ticker = COMMODITIES_GLOBAL[t_name]
 
-# --- RESTORED OPTIONS ---
+# RESTORED SETTINGS
 ai_horizon = "Short Term (Intraday)"
 chart_range = "1 Day"
 
 if view != "🏠 Market Dashboard":
     st.sidebar.markdown("---")
-    st.sidebar.subheader("⚙️ Analysis Settings")
-    
-    # 1. CHART TIME RANGE
+    st.sidebar.subheader("⚙️ Settings")
     chart_range = st.sidebar.selectbox("Chart History", ["1 Day", "5 Days", "1 Month", "6 Months", "YTD", "1 Year", "5 Years", "Max"])
-    
-    # 2. AI MODEL HORIZON (Restored)
-    ai_horizon = st.sidebar.radio("AI Prediction Horizon", ["Short Term (Intraday)", "Long Term (Delivery)"])
+    ai_horizon = st.sidebar.radio("AI Prediction Horizon", ["Short Term (Intraday)", "Long Term (Daily)"])
 
 
 # --- 5. VISUALIZATION FRAGMENTS ---
@@ -229,8 +225,19 @@ def render_stable_chart(ticker, range_choice):
         if not df.empty:
             df = add_indicators(df)
             fig = go.Figure()
-            fig.add_trace(go.Candlestick(x=df.index, open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
-            if len(df) > 20: fig.add_trace(go.Scatter(x=df.index, y=df['EMA_20'], line=dict(color='#2979ff', width=2), name="EMA 20"))
+            
+            # --- THE FIX FOR BROKEN CHARTS ---
+            # using type='category' removes weekend gaps
+            fig.update_xaxes(
+                type='category', 
+                tickmode='auto', 
+                nticks=8,  # Limit ticks to prevent overcrowding
+                showgrid=False
+            )
+            
+            fig.add_trace(go.Candlestick(x=df.index.strftime('%Y-%m-%d %H:%M'), open=df['Open'], high=df['High'], low=df['Low'], close=df['Close'], name="Price"))
+            if len(df) > 20: fig.add_trace(go.Scatter(x=df.index.strftime('%Y-%m-%d %H:%M'), y=df['EMA_20'], line=dict(color='#2979ff', width=2), name="EMA 20"))
+            
             fig.update_layout(height=450, margin=dict(t=30,b=0,l=0,r=0), template="plotly_dark", xaxis_rangeslider_visible=False, paper_bgcolor="#1e2330", plot_bgcolor="#1e2330", title=dict(text=f"{range_choice} Chart ({ticker})", font=dict(color="#aaa", size=12)))
             st.plotly_chart(fig, use_container_width=True)
         else: st.warning("No data for this range.")
@@ -286,10 +293,8 @@ else:
                 try:
                     # DYNAMIC DATA LOADING BASED ON SELECTION
                     if ai_horizon == "Short Term (Intraday)":
-                        # Train on 5-minute candles (Last 5 Days)
                         df_train = yf.download(selected_ticker, period="5d", interval="5m", progress=False)
                     else:
-                        # Train on Daily candles (Last 2 Years)
                         df_train = yf.download(selected_ticker, period="2y", interval="1d", progress=False)
                     
                     if isinstance(df_train.columns, pd.MultiIndex): df_train.columns = df_train.columns.droplevel(1)
@@ -309,7 +314,6 @@ else:
                             st.markdown(f"Signal: **:{col}[{sig}]** (Potential: {diff:+.2f})")
                             
                             with st.expander("🔐 Unlock Pro Trade Setup"):
-                                # Adjust stop loss width based on timeframe
                                 multiplier = 1.0 if "Intraday" in ai_horizon else 2.0
                                 sl = curr - (1.5 * atr * multiplier) if diff > 0 else curr + (1.5 * atr * multiplier)
                                 t1 = curr + (1 * atr * multiplier) if diff > 0 else curr - (1 * atr * multiplier)
